@@ -22,6 +22,7 @@ Na barra lateral use o **Menu** para alternar entre:
 - **Instrucoes** — passo a passo de uso
 - **Descricao das variaveis** — glossario dos termos
 - **Validacao** — niveis observados vs simulados (NSE/Nash, R2, RMSE, MAE)
+- **Sugestao de calibracao** — faixas de infiltracao e Manning (US) e n do canal
 
 ## Uso rapido
 

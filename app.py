@@ -38,6 +38,122 @@ GLOSSARIO_ROWS = [
     {"Termo": "RMSE / MAE / Vies", "Unidade": "m", "Descricao": "Erro quadratico medio, erro absoluto medio e vies medio (S - O) para nivel."},
 ]
 
+# Referencias para calibracao (ordens de grandeza; ajustar ao local e ao evento)
+CALIBRACAO_USO_SOLO = [
+    {
+        "Classe": "Superficies impermeaveis",
+        "Exemplos": "Telhados, lajes, coberturas; ruas e estacionamentos pavimentados",
+        "Infil_sugerida_mm_h": 1.0,
+        "Infil_min_mm_h": 0.0,
+        "Infil_max_mm_h": 3.0,
+        "n_sugerido": 0.015,
+        "n_min": 0.011,
+        "n_max": 0.020,
+    },
+    {
+        "Classe": "Area verde — floresta / mata",
+        "Exemplos": "Vegetacao arborea densa, sub-bosque",
+        "Infil_sugerida_mm_h": 35.0,
+        "Infil_min_mm_h": 20.0,
+        "Infil_max_mm_h": 55.0,
+        "n_sugerido": 0.35,
+        "n_min": 0.28,
+        "n_max": 0.45,
+    },
+    {
+        "Classe": "Area verde — grama / jardim",
+        "Exemplos": "Gramados irrigados ou nao, jardins, parques com grama",
+        "Infil_sugerida_mm_h": 18.0,
+        "Infil_min_mm_h": 8.0,
+        "Infil_max_mm_h": 28.0,
+        "n_sugerido": 0.24,
+        "n_min": 0.15,
+        "n_max": 0.30,
+    },
+    {
+        "Classe": "Area verde — pastagem",
+        "Exemplos": "Pastagens, campos herbaceos",
+        "Infil_sugerida_mm_h": 22.0,
+        "Infil_min_mm_h": 10.0,
+        "Infil_max_mm_h": 35.0,
+        "n_sugerido": 0.28,
+        "n_min": 0.20,
+        "n_max": 0.38,
+    },
+    {
+        "Classe": "Solo exposto",
+        "Exemplos": "Canteiros, cortes, terrenos sem vegetacao",
+        "Infil_sugerida_mm_h": 8.0,
+        "Infil_min_mm_h": 2.0,
+        "Infil_max_mm_h": 18.0,
+        "n_sugerido": 0.035,
+        "n_min": 0.020,
+        "n_max": 0.080,
+    },
+    {
+        "Classe": "Agricultura",
+        "Exemplos": "Lavouras, hortas, culturas anuais",
+        "Infil_sugerida_mm_h": 15.0,
+        "Infil_min_mm_h": 5.0,
+        "Infil_max_mm_h": 35.0,
+        "n_sugerido": 0.22,
+        "n_min": 0.12,
+        "n_max": 0.35,
+    },
+]
+
+CALIBRACAO_CANAL_MANNING = [
+    {
+        "Tipo_revestimento": "Concreto liso (acabado)",
+        "n_sugerido": 0.013,
+        "n_min": 0.011,
+        "n_max": 0.015,
+        "Notas": "Superficies bem acabadas, canalizacoes urbanas tipicas",
+    },
+    {
+        "Tipo_revestimento": "Concreto rugoso / envelhecido",
+        "n_sugerido": 0.016,
+        "n_min": 0.014,
+        "n_max": 0.018,
+        "Notas": "Maior rugosidade por desgaste ou junta",
+    },
+    {
+        "Tipo_revestimento": "Alvenaria / pedra aparelhada",
+        "n_sugerido": 0.018,
+        "n_min": 0.016,
+        "n_max": 0.022,
+        "Notas": "Muros de canal",
+    },
+    {
+        "Tipo_revestimento": "Pedra seca / enrocamento",
+        "n_sugerido": 0.030,
+        "n_min": 0.025,
+        "n_max": 0.035,
+        "Notas": "Leitos dissipativos",
+    },
+    {
+        "Tipo_revestimento": "Terra limpa (sem vegetacao)",
+        "n_sugerido": 0.025,
+        "n_min": 0.020,
+        "n_max": 0.030,
+        "Notas": "Canais de terra compactada",
+    },
+    {
+        "Tipo_revestimento": "Terra com vegetacao",
+        "n_sugerido": 0.038,
+        "n_min": 0.030,
+        "n_max": 0.045,
+        "Notas": "Leitos com capim ou vegetacao",
+    },
+    {
+        "Tipo_revestimento": "Leito natural (rio / canal nao revestido)",
+        "n_sugerido": 0.045,
+        "n_min": 0.035,
+        "n_max": 0.060,
+        "Notas": "Alta variabilidade conforme meandros e material",
+    },
+]
+
 
 def parse_upstream_ids(text: str) -> list[int]:
     if text is None:
@@ -257,11 +373,68 @@ with st.sidebar:
     st.header("Menu")
     pagina = st.radio(
         "Navegar",
-        ["Simulacao", "Validacao", "Instrucoes", "Descricao das variaveis"],
+        [
+            "Simulacao",
+            "Validacao",
+            "Sugestao de calibracao",
+            "Instrucoes",
+            "Descricao das variaveis",
+        ],
         label_visibility="collapsed",
     )
 
-if pagina == "Instrucoes":
+if pagina == "Sugestao de calibracao":
+    st.title("Sugestao de calibracao")
+    st.caption(
+        "Valores de referencia para **infiltracao (mm/h)** e **Manning (n)** na superficie (US) e **n do canal**. "
+        "Sao ordens de magnitude para eventos urbanos; calibre com dados locais e validacao."
+    )
+    st.info(
+        "Use estas tabelas como **ponto de partida** na aba **Simulacao** (campos US e `n_canal`). "
+        "Ajuste dentro das faixas conforme solo, declividade, estado de conservacao e comparacao com observacoes."
+    )
+
+    st.subheader("Uso e ocupacao do solo (superficie — plano inclinado)")
+    df_us = pd.DataFrame(CALIBRACAO_USO_SOLO)
+    st.dataframe(
+        df_us,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Classe": st.column_config.TextColumn("Classe", width="medium"),
+            "Exemplos": st.column_config.TextColumn("Exemplos", width="large"),
+            "Infil_sugerida_mm_h": st.column_config.NumberColumn("Infil. sugerida (mm/h)", format="%.2f"),
+            "Infil_min_mm_h": st.column_config.NumberColumn("Infil. min (mm/h)", format="%.2f"),
+            "Infil_max_mm_h": st.column_config.NumberColumn("Infil. max (mm/h)", format="%.2f"),
+            "n_sugerido": st.column_config.NumberColumn("n sugerido", format="%.3f"),
+            "n_min": st.column_config.NumberColumn("n min", format="%.3f"),
+            "n_max": st.column_config.NumberColumn("n max", format="%.3f"),
+        },
+    )
+
+    st.subheader("Canal (coeficiente de Manning do revestimento)")
+    df_canal = pd.DataFrame(CALIBRACAO_CANAL_MANNING)
+    st.dataframe(
+        df_canal,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Tipo_revestimento": st.column_config.TextColumn("Tipo de revestimento", width="large"),
+            "n_sugerido": st.column_config.NumberColumn("n sugerido", format="%.3f"),
+            "n_min": st.column_config.NumberColumn("n min", format="%.3f"),
+            "n_max": st.column_config.NumberColumn("n max", format="%.3f"),
+            "Notas": st.column_config.TextColumn("Notas", width="large"),
+        },
+    )
+
+    st.markdown(
+        """
+**Fonte conceitual:** literatura de drenagem urbana e manuais de coeficientes de Manning (escoamento superficial e canais).  
+**Infiltracao** em eventos curtos e intensos pode ser calibrada para baixo se houver saturacao ou encrostamento; **n** aumenta com vegetacao densa e irregularidade do terreno.
+        """
+    )
+
+elif pagina == "Instrucoes":
     st.title("Instrucoes de uso")
     st.markdown(
         """
@@ -274,6 +447,7 @@ if pagina == "Instrucoes":
 5. **Chuva**: edite `P_mm_h` por passo. O passo inicial (`t = 0`) pode ser zero; a chuva efetiva costuma comecar no passo seguinte, conforme seu evento.
 6. Clique em **Rodar simulacao** e visualize os hidrogramas de nivel e vazao. Baixe os resultados em Excel se desejar.
 7. Aba **Validacao**: informe niveis medidos em campo (grade ou CSV) e compare com a serie simulada (NSE, R2, RMSE, etc.).
+8. Aba **Sugestao de calibracao**: consulte faixas de infiltracao, n na superficie e n do canal antes de preencher a simulacao.
 
 ### Observacoes
 
