@@ -1,5 +1,8 @@
 import math
+import json
 from io import BytesIO
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -153,6 +156,125 @@ CALIBRACAO_CANAL_MANNING = [
         "Notas": "Alta variabilidade conforme meandros e material",
     },
 ]
+
+SIM_STORE_PATH = Path(__file__).parent / "simulacoes_salvas.json"
+
+
+def carregar_simulacoes_salvas() -> dict:
+    if not SIM_STORE_PATH.exists():
+        return {"last_id": None, "items": []}
+    try:
+        data = json.loads(SIM_STORE_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "items" in data:
+            return data
+    except Exception:
+        pass
+    return {"last_id": None, "items": []}
+
+
+def salvar_simulacoes_salvas(data: dict) -> None:
+    SIM_STORE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def gerar_payload_simulacao(
+    titulo: str,
+    dt_seg: int,
+    duracao_min: int,
+    n_ac: int,
+    exutorio_id: int,
+    b_canal: float,
+    s_canal: float,
+    n_canal: float,
+    nivel_base: float,
+    usar_us_para_eq: bool,
+    ac_df: pd.DataFrame,
+    us_df: pd.DataFrame,
+    chuva_df: pd.DataFrame,
+) -> dict:
+    return {
+        "id": datetime.utcnow().strftime("%Y%m%d%H%M%S%f"),
+        "titulo": titulo.strip() if titulo.strip() else f"Simulação {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "params": {
+            "dt_seg": int(dt_seg),
+            "duracao_min": int(duracao_min),
+            "n_ac": int(n_ac),
+            "exutorio_id": int(exutorio_id),
+            "b_canal": float(b_canal),
+            "s_canal": float(s_canal),
+            "n_canal": float(n_canal),
+            "nivel_base": float(nivel_base),
+            "usar_us_para_eq": bool(usar_us_para_eq),
+        },
+        "ac_df": ac_df.to_dict(orient="records"),
+        "us_df": us_df.to_dict(orient="records"),
+        "chuva_df": chuva_df.to_dict(orient="records"),
+    }
+
+
+def aplicar_payload_em_session(payload: dict) -> None:
+    p = payload.get("params", {})
+    st.session_state["dt_seg"] = int(p.get("dt_seg", 600))
+    st.session_state["duracao_min"] = int(p.get("duracao_min", 40))
+    st.session_state["n_ac"] = int(p.get("n_ac", 3))
+    st.session_state["exutorio_id"] = int(p.get("exutorio_id", st.session_state["n_ac"]))
+    st.session_state["b_canal"] = float(p.get("b_canal", 4.0))
+    st.session_state["s_canal"] = float(p.get("s_canal", 0.004))
+    st.session_state["n_canal"] = float(p.get("n_canal", 0.018))
+    st.session_state["nivel_base"] = float(p.get("nivel_base", 0.2))
+    st.session_state["usar_us_para_eq"] = bool(p.get("usar_us_para_eq", True))
+    st.session_state["ac_df_loaded"] = pd.DataFrame(payload.get("ac_df", []))
+    st.session_state["us_df_loaded"] = pd.DataFrame(payload.get("us_df", []))
+    st.session_state["chuva_df_loaded"] = pd.DataFrame(payload.get("chuva_df", []))
+    st.session_state["titulo_salvar"] = payload.get("titulo", "")
+
+
+def validar_campos_obrigatorios(
+    dt_seg: int,
+    duracao_min: int,
+    n_ac: int,
+    exutorio_id: int,
+    b_canal: float,
+    s_canal: float,
+    n_canal: float,
+    ac_df: pd.DataFrame,
+    us_df: pd.DataFrame,
+    chuva_df: pd.DataFrame,
+) -> list[str]:
+    erros = []
+    if dt_seg <= 0:
+        erros.append("`Delta t (s)` deve ser maior que zero.")
+    if duracao_min <= 0:
+        erros.append("`Duracao da chuva (min)` deve ser maior que zero.")
+    if n_ac <= 0:
+        erros.append("`Numero de ACs` deve ser maior que zero.")
+    if exutorio_id <= 0:
+        erros.append("`ID da AC de exutorio` deve ser maior que zero.")
+    if b_canal <= 0:
+        erros.append("`B_canal (m)` deve ser maior que zero.")
+    if s_canal <= 0:
+        erros.append("`S_canal (m/m)` deve ser maior que zero.")
+    if n_canal <= 0:
+        erros.append("`n_canal` deve ser maior que zero.")
+    if ac_df.empty:
+        erros.append("Tabela de `Areas de contribuicao (AC)` esta vazia.")
+    else:
+        for col in ["ID_AC", "Area_m2", "L_m", "S_m_m"]:
+            if col not in ac_df.columns or ac_df[col].isna().any():
+                erros.append(f"Preencha todos os valores obrigatorios em AC: `{col}`.")
+                break
+    if us_df.empty:
+        erros.append("Tabela de `Unidades de uso do solo (US)` esta vazia.")
+    else:
+        for col in ["ID_AC", "Area_US_m2", "Infiltracao_US_mm_h", "n_US"]:
+            if col not in us_df.columns or pd.to_numeric(us_df[col], errors="coerce").isna().any():
+                erros.append(f"Preencha todos os valores obrigatorios em US: `{col}`.")
+                break
+    if chuva_df.empty or "P_mm_h" not in chuva_df.columns:
+        erros.append("Tabela de chuva esta vazia.")
+    elif pd.to_numeric(chuva_df["P_mm_h"], errors="coerce").isna().any():
+        erros.append("Preencha todos os valores de `P_mm_h` na tabela de chuva.")
+    return erros
 
 
 def parse_upstream_ids(text: str) -> list[int]:
@@ -369,12 +491,23 @@ def montar_df_validacao(df_saida: pd.DataFrame, df_obs_antigo: pd.DataFrame | No
     return out
 
 
+if "sim_store_loaded" not in st.session_state:
+    store = carregar_simulacoes_salvas()
+    st.session_state["sim_store"] = store
+    st.session_state["sim_store_loaded"] = True
+    st.session_state["titulo_salvar"] = ""
+    if store.get("last_id"):
+        last = next((x for x in store.get("items", []) if x.get("id") == store.get("last_id")), None)
+        if last is not None:
+            aplicar_payload_em_session(last)
+
 with st.sidebar:
     st.header("Menu")
     pagina = st.radio(
         "Navegar",
         [
             "Simulacao",
+            "Simulacoes salvas",
             "Validacao",
             "Sugestao de calibracao",
             "Instrucoes",
@@ -465,6 +598,36 @@ elif pagina == "Descricao das variaveis":
         use_container_width=True,
         hide_index=True,
     )
+
+elif pagina == "Simulacoes salvas":
+    st.title("Simulacoes salvas")
+    st.caption("Carregue, exclua e reutilize simulacoes anteriores.")
+
+    store = st.session_state.get("sim_store", {"last_id": None, "items": []})
+    items = store.get("items", [])
+    if not items:
+        st.info("Nenhuma simulacao salva ainda. Salve uma simulacao na aba **Simulacao**.")
+    else:
+        for item in sorted(items, key=lambda x: x.get("created_at", ""), reverse=True):
+            titulo = item.get("titulo", "Sem titulo")
+            created = item.get("created_at", "")
+            with st.container(border=True):
+                st.markdown(f"**{titulo}**")
+                st.caption(f"Criada em: {created}")
+                c1, c2 = st.columns(2)
+                if c1.button("Usar nesta simulacao", key=f"load_{item.get('id')}"):
+                    aplicar_payload_em_session(item)
+                    st.session_state["sim_store"]["last_id"] = item.get("id")
+                    salvar_simulacoes_salvas(st.session_state["sim_store"])
+                    st.success("Simulacao carregada. Abra a aba **Simulacao** para editar/rodar.")
+                if c2.button("Excluir", key=f"del_{item.get('id')}"):
+                    st.session_state["sim_store"]["items"] = [
+                        x for x in st.session_state["sim_store"]["items"] if x.get("id") != item.get("id")
+                    ]
+                    if st.session_state["sim_store"].get("last_id") == item.get("id"):
+                        st.session_state["sim_store"]["last_id"] = None
+                    salvar_simulacoes_salvas(st.session_state["sim_store"])
+                    st.rerun()
 
 elif pagina == "Validacao":
     st.title("Validacao: nivel observado vs simulado")
@@ -618,23 +781,35 @@ else:
     st.title("Modelo Hidrologico Urbano - Escoamento e Nivel no Canal")
     st.caption("Versao web local para simulacao de evento unico de chuva-vazao.")
 
+    # Defaults (ou ultimo salvo carregado)
+    st.session_state.setdefault("dt_seg", 600)
+    st.session_state.setdefault("duracao_min", 40)
+    st.session_state.setdefault("b_canal", 4.0)
+    st.session_state.setdefault("s_canal", 0.004)
+    st.session_state.setdefault("n_canal", 0.018)
+    st.session_state.setdefault("nivel_base", 0.2)
+    st.session_state.setdefault("n_ac", 3)
+    st.session_state.setdefault("exutorio_id", 3)
+    st.session_state.setdefault("usar_us_para_eq", True)
+    st.session_state.setdefault("titulo_salvar", "")
+
     with st.sidebar:
         st.header("Configuracao")
-        dt_seg = st.number_input("Delta t (s)", min_value=60, value=600, step=60)
-        duracao_min = st.number_input("Duracao da chuva (min)", min_value=10, value=40, step=10)
+        dt_seg = st.number_input("Delta t (s)", min_value=60, step=60, key="dt_seg")
+        duracao_min = st.number_input("Duracao da chuva (min)", min_value=10, step=10, key="duracao_min")
         n_passos = int(math.ceil((duracao_min * 60) / dt_seg) + 1)
         st.write(f"Passos ativos: {n_passos} (inclui t=0)")
 
     st.subheader("1) Parametros do canal")
     col1, col2, col3, col4 = st.columns(4)
-    b_canal = col1.number_input("B_canal (m)", min_value=0.1, value=4.0)
-    s_canal = col2.number_input("S_canal (m/m)", min_value=0.0001, value=0.004, format="%.4f")
-    n_canal = col3.number_input("n_canal", min_value=0.001, value=0.018, format="%.3f")
-    nivel_base = col4.number_input("Nivel base (m)", value=0.2, format="%.3f")
+    b_canal = col1.number_input("B_canal (m)", min_value=0.1, key="b_canal")
+    s_canal = col2.number_input("S_canal (m/m)", min_value=0.0001, format="%.4f", key="s_canal")
+    n_canal = col3.number_input("n_canal", min_value=0.001, format="%.3f", key="n_canal")
+    nivel_base = col4.number_input("Nivel base (m)", format="%.3f", key="nivel_base")
 
     st.subheader("2) Areas de contribuicao (AC)")
-    n_ac = st.number_input("Numero de ACs", min_value=1, max_value=20, value=3, step=1)
-    exutorio_id = st.number_input("ID da AC de exutorio", min_value=1, max_value=20, value=int(n_ac))
+    n_ac = st.number_input("Numero de ACs", min_value=1, max_value=20, step=1, key="n_ac")
+    exutorio_id = st.number_input("ID da AC de exutorio", min_value=1, max_value=20, step=1, key="exutorio_id")
 
     default_ac = pd.DataFrame(
         [
@@ -683,18 +858,22 @@ else:
                 "n_eq": 0.1,
             }
     ac_df_edit = default_ac.head(n_ac).copy()
+    ac_loaded = st.session_state.get("ac_df_loaded")
+    if isinstance(ac_loaded, pd.DataFrame) and not ac_loaded.empty:
+        ac_df_edit = ac_loaded.copy().head(n_ac)
 
     ac_df = st.data_editor(
         ac_df_edit,
         num_rows="fixed",
         use_container_width=True,
         hide_index=True,
+        key="editor_ac",
     )
 
     st.subheader("3) Unidades de uso do solo (US) - editavel")
     usar_us_para_eq = st.checkbox(
         "Calcular Infiltracao_eq_mm_h e n_eq automaticamente a partir das US",
-        value=True,
+        key="usar_us_para_eq",
     )
     classes_padrao = ["Superficie impermeavel", "Gramado", "Vegetacao arborea"]
     rows_us = []
@@ -720,11 +899,15 @@ else:
                 }
             )
     us_default_df = pd.DataFrame(rows_us)
+    us_loaded = st.session_state.get("us_df_loaded")
+    if isinstance(us_loaded, pd.DataFrame) and not us_loaded.empty:
+        us_default_df = us_loaded.copy()
     us_df = st.data_editor(
         us_default_df,
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
+        key="editor_us",
     )
 
     if usar_us_para_eq:
@@ -744,17 +927,84 @@ else:
     if n_passos >= 5:
         default_chuva[1:5] = [18, 42, 25, 8]
     chuva_df = pd.DataFrame({"Passo": np.arange(n_passos), "Tempo_s": tempo_vec, "P_mm_h": default_chuva})
+    chuva_loaded = st.session_state.get("chuva_df_loaded")
+    if isinstance(chuva_loaded, pd.DataFrame) and not chuva_loaded.empty:
+        chuva_loaded = chuva_loaded.copy()
+        if "P_mm_h" in chuva_loaded.columns:
+            chuva_df["P_mm_h"] = np.nan
+            n_copy = min(len(chuva_df), len(chuva_loaded))
+            chuva_df.loc[: n_copy - 1, "P_mm_h"] = pd.to_numeric(
+                chuva_loaded.iloc[:n_copy]["P_mm_h"], errors="coerce"
+            )
     chuva_df_edit = st.data_editor(
         chuva_df,
         num_rows="fixed",
         use_container_width=True,
         hide_index=True,
         disabled=["Passo", "Tempo_s"],
+        key="editor_chuva",
     )
+
+    st.subheader("5) Gestao da simulacao")
+    st.text_input("Titulo da simulacao para salvar", key="titulo_salvar", placeholder="Ex.: Evento 12/03/2026")
+    g1, g2 = st.columns(2)
+    if g1.button("Salvar simulacao"):
+        payload = gerar_payload_simulacao(
+            titulo=st.session_state.get("titulo_salvar", ""),
+            dt_seg=int(dt_seg),
+            duracao_min=int(duracao_min),
+            n_ac=int(n_ac),
+            exutorio_id=int(exutorio_id),
+            b_canal=float(b_canal),
+            s_canal=float(s_canal),
+            n_canal=float(n_canal),
+            nivel_base=float(nivel_base),
+            usar_us_para_eq=bool(usar_us_para_eq),
+            ac_df=ac_df,
+            us_df=us_df,
+            chuva_df=chuva_df_edit,
+        )
+        store = st.session_state.get("sim_store", {"last_id": None, "items": []})
+        store["items"] = [x for x in store.get("items", []) if x.get("id") != payload["id"]]
+        store["items"].append(payload)
+        store["last_id"] = payload["id"]
+        st.session_state["sim_store"] = store
+        salvar_simulacoes_salvas(store)
+        st.success("Simulacao salva com sucesso.")
+
+    if g2.button("Limpar simulacao"):
+        st.session_state["ac_df_loaded"] = pd.DataFrame(
+            columns=["ID_AC", "Area_m2", "L_m", "S_m_m", "ACs_montante_ids", "h0_m", "Infiltracao_eq_mm_h", "n_eq"]
+        )
+        st.session_state["us_df_loaded"] = pd.DataFrame(
+            columns=["ID_AC", "ID_US", "Classe_US", "Area_US_m2", "Infiltracao_US_mm_h", "n_US"]
+        )
+        st.session_state["chuva_df_loaded"] = pd.DataFrame(columns=["Passo", "Tempo_s", "P_mm_h"])
+        st.session_state["titulo_salvar"] = ""
+        st.info("Campos da simulacao limpos. Preencha novamente para iniciar do zero.")
+        st.rerun()
 
     if st.button("Rodar simulacao", type="primary"):
         try:
-            chuva_mmh = chuva_df_edit["P_mm_h"].astype(float).to_numpy()
+            erros = validar_campos_obrigatorios(
+                dt_seg=int(dt_seg),
+                duracao_min=int(duracao_min),
+                n_ac=int(n_ac),
+                exutorio_id=int(exutorio_id),
+                b_canal=float(b_canal),
+                s_canal=float(s_canal),
+                n_canal=float(n_canal),
+                ac_df=ac_df,
+                us_df=us_df,
+                chuva_df=chuva_df_edit,
+            )
+            if erros:
+                st.error("A simulacao nao pode rodar. Corrija os campos obrigatorios:")
+                for e in erros:
+                    st.markdown(f"- {e}")
+                st.stop()
+
+            chuva_mmh = pd.to_numeric(chuva_df_edit["P_mm_h"], errors="coerce").astype(float).to_numpy()
             ac_df = ac_preview.copy()
             ac_df["ID_AC"] = ac_df["ID_AC"].astype(int)
             for col in ["Area_m2", "L_m", "S_m_m", "h0_m", "Infiltracao_eq_mm_h", "n_eq"]:
@@ -775,6 +1025,9 @@ else:
             st.session_state["df_validacao_obs"] = montar_df_validacao(
                 df_saida, st.session_state.get("df_validacao_obs")
             )
+            st.session_state["ac_df_loaded"] = ac_df.copy()
+            st.session_state["us_df_loaded"] = us_df.copy()
+            st.session_state["chuva_df_loaded"] = chuva_df_edit.copy()
 
             st.success("Simulacao concluida.")
             c1, c2, c3 = st.columns(3)
