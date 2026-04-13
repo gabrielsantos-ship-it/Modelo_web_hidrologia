@@ -792,6 +792,28 @@ else:
     st.session_state.setdefault("exutorio_id", 3)
     st.session_state.setdefault("usar_us_para_eq", True)
     st.session_state.setdefault("titulo_salvar", "")
+    st.session_state.setdefault("_clear_sim_requested", False)
+    st.session_state.setdefault("_show_clear_notice", False)
+
+    if st.session_state.get("_clear_sim_requested"):
+        st.session_state["ac_df_loaded"] = pd.DataFrame(
+            columns=["ID_AC", "Area_m2", "L_m", "S_m_m", "ACs_montante_ids", "h0_m", "Infiltracao_eq_mm_h", "n_eq"]
+        )
+        st.session_state["us_df_loaded"] = pd.DataFrame(
+            columns=["ID_AC", "ID_US", "Classe_US", "Area_US_m2", "Infiltracao_US_mm_h", "n_US"]
+        )
+        st.session_state["chuva_df_loaded"] = pd.DataFrame(columns=["Passo", "Tempo_s", "P_mm_h"])
+        st.session_state["titulo_salvar"] = ""
+        # Limpa estado interno dos widgets antes de renderizar novamente.
+        st.session_state.pop("editor_ac", None)
+        st.session_state.pop("editor_us", None)
+        st.session_state.pop("editor_chuva", None)
+        st.session_state["_clear_sim_requested"] = False
+        st.session_state["_show_clear_notice"] = True
+
+    if st.session_state.get("_show_clear_notice"):
+        st.info("Campos da simulacao limpos. Preencha novamente para iniciar do zero.")
+        st.session_state["_show_clear_notice"] = False
 
     with st.sidebar:
         st.header("Configuracao")
@@ -973,15 +995,7 @@ else:
         st.success("Simulacao salva com sucesso.")
 
     if g2.button("Limpar simulacao"):
-        st.session_state["ac_df_loaded"] = pd.DataFrame(
-            columns=["ID_AC", "Area_m2", "L_m", "S_m_m", "ACs_montante_ids", "h0_m", "Infiltracao_eq_mm_h", "n_eq"]
-        )
-        st.session_state["us_df_loaded"] = pd.DataFrame(
-            columns=["ID_AC", "ID_US", "Classe_US", "Area_US_m2", "Infiltracao_US_mm_h", "n_US"]
-        )
-        st.session_state["chuva_df_loaded"] = pd.DataFrame(columns=["Passo", "Tempo_s", "P_mm_h"])
-        st.session_state["titulo_salvar"] = ""
-        st.info("Campos da simulacao limpos. Preencha novamente para iniciar do zero.")
+        st.session_state["_clear_sim_requested"] = True
         st.rerun()
 
     if st.button("Rodar simulacao", type="primary"):
