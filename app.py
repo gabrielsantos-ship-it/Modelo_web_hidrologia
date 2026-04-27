@@ -227,6 +227,10 @@ def aplicar_payload_em_session(payload: dict) -> None:
     st.session_state["us_df_loaded"] = pd.DataFrame(payload.get("us_df", []))
     st.session_state["chuva_df_loaded"] = pd.DataFrame(payload.get("chuva_df", []))
     st.session_state["titulo_salvar"] = payload.get("titulo", "")
+    # Garante que data_editors renderizem os dados carregados, não cache antigo do widget.
+    st.session_state.pop("editor_ac", None)
+    st.session_state.pop("editor_us", None)
+    st.session_state.pop("editor_chuva", None)
 
 
 def validar_campos_obrigatorios(
@@ -250,6 +254,8 @@ def validar_campos_obrigatorios(
         erros.append("`Numero de ACs` deve ser maior que zero.")
     if exutorio_id <= 0:
         erros.append("`ID da AC de exutorio` deve ser maior que zero.")
+    if exutorio_id > n_ac:
+        erros.append("`ID da AC de exutorio` deve estar dentro do intervalo de ACs informadas.")
     if b_canal <= 0:
         erros.append("`B_canal (m)` deve ser maior que zero.")
     if s_canal <= 0:
@@ -982,7 +988,7 @@ else:
             n_canal=float(n_canal),
             nivel_base=float(nivel_base),
             usar_us_para_eq=bool(usar_us_para_eq),
-            ac_df=ac_df,
+            ac_df=ac_preview,
             us_df=us_df,
             chuva_df=chuva_df_edit,
         )
