@@ -45,7 +45,7 @@ GLOSSARIO_ROWS = [
 CALIBRACAO_USO_SOLO = [
     {
         "Classe": "Superficies impermeaveis",
-        "Exemplos": "Telhados, lajes, coberturas; ruas e estacionamentos pavimentados",
+        "Exemplos": "Vias pavimentadas, passeios, estacionamentos, telhados e coberturas, patios e pracas com piso impermeavel",
         "Infil_sugerida_mm_h": 1.0,
         "Infil_min_mm_h": 0.0,
         "Infil_max_mm_h": 3.0,
@@ -54,8 +54,28 @@ CALIBRACAO_USO_SOLO = [
         "n_max": 0.020,
     },
     {
-        "Classe": "Area verde — floresta / mata",
-        "Exemplos": "Vegetacao arborea densa, sub-bosque",
+        "Classe": "Superficies semi-impermeaveis",
+        "Exemplos": "Ruas nao pavimentadas, estradas vicinais, caminhos de terra e estacionamentos de terra",
+        "Infil_sugerida_mm_h": 6.0,
+        "Infil_min_mm_h": 2.0,
+        "Infil_max_mm_h": 12.0,
+        "n_sugerido": 0.035,
+        "n_min": 0.020,
+        "n_max": 0.060,
+    },
+    {
+        "Classe": "Solo exposto",
+        "Exemplos": "Terrenos baldios, taludes expostos e areas com remocao de vegetacao",
+        "Infil_sugerida_mm_h": 8.0,
+        "Infil_min_mm_h": 2.0,
+        "Infil_max_mm_h": 18.0,
+        "n_sugerido": 0.040,
+        "n_min": 0.020,
+        "n_max": 0.080,
+    },
+    {
+        "Classe": "Cobertura vegetal arborea",
+        "Exemplos": "Florestas, matas ciliares e fragmentos florestais",
         "Infil_sugerida_mm_h": 35.0,
         "Infil_min_mm_h": 20.0,
         "Infil_max_mm_h": 55.0,
@@ -64,44 +84,64 @@ CALIBRACAO_USO_SOLO = [
         "n_max": 0.45,
     },
     {
-        "Classe": "Area verde — grama / jardim",
-        "Exemplos": "Gramados irrigados ou nao, jardins, parques com grama",
+        "Classe": "Cobertura vegetal rasteira",
+        "Exemplos": "Campos naturais, areas de grama e capim natural e outras areas verdes nao urbanizadas",
+        "Infil_sugerida_mm_h": 22.0,
+        "Infil_min_mm_h": 10.0,
+        "Infil_max_mm_h": 35.0,
+        "n_sugerido": 0.25,
+        "n_min": 0.16,
+        "n_max": 0.35,
+    },
+    {
+        "Classe": "Area verde urbana",
+        "Exemplos": "Quintais residenciais, jardins, pracas com vegetacao, canteiros urbanos, areas verdes de escolas e condominios",
         "Infil_sugerida_mm_h": 18.0,
         "Infil_min_mm_h": 8.0,
-        "Infil_max_mm_h": 28.0,
-        "n_sugerido": 0.24,
+        "Infil_max_mm_h": 30.0,
+        "n_sugerido": 0.22,
         "n_min": 0.15,
         "n_max": 0.30,
     },
     {
-        "Classe": "Area verde — pastagem",
-        "Exemplos": "Pastagens, campos herbaceos",
-        "Infil_sugerida_mm_h": 22.0,
-        "Infil_min_mm_h": 10.0,
-        "Infil_max_mm_h": 35.0,
+        "Classe": "Pastagem",
+        "Exemplos": "Pasto de gado e manejo animal evidenciado",
+        "Infil_sugerida_mm_h": 16.0,
+        "Infil_min_mm_h": 6.0,
+        "Infil_max_mm_h": 30.0,
         "n_sugerido": 0.28,
-        "n_min": 0.20,
-        "n_max": 0.38,
+        "n_min": 0.18,
+        "n_max": 0.40,
     },
     {
-        "Classe": "Solo exposto",
-        "Exemplos": "Canteiros, cortes, terrenos sem vegetacao",
-        "Infil_sugerida_mm_h": 8.0,
-        "Infil_min_mm_h": 2.0,
-        "Infil_max_mm_h": 18.0,
-        "n_sugerido": 0.035,
-        "n_min": 0.020,
-        "n_max": 0.080,
+        "Classe": "Corpos d'agua",
+        "Exemplos": "Rios, acudes, lagos e canais abertos",
+        "Infil_sugerida_mm_h": 0.0,
+        "Infil_min_mm_h": 0.0,
+        "Infil_max_mm_h": 0.5,
+        "n_sugerido": 0.030,
+        "n_min": 0.015,
+        "n_max": 0.060,
     },
     {
-        "Classe": "Agricultura",
-        "Exemplos": "Lavouras, hortas, culturas anuais",
-        "Infil_sugerida_mm_h": 15.0,
-        "Infil_min_mm_h": 5.0,
-        "Infil_max_mm_h": 35.0,
-        "n_sugerido": 0.22,
-        "n_min": 0.12,
-        "n_max": 0.35,
+        "Classe": "Infraestrutura urbana linear",
+        "Exemplos": "Ferrovias, patios ferroviarios, corredores de servico e faixas de dutos",
+        "Infil_sugerida_mm_h": 4.0,
+        "Infil_min_mm_h": 0.5,
+        "Infil_max_mm_h": 12.0,
+        "n_sugerido": 0.030,
+        "n_min": 0.015,
+        "n_max": 0.060,
+    },
+    {
+        "Classe": "Superficies drenantes artificiais",
+        "Exemplos": "Piso intertravado drenante, pavimento permeavel e valas/trincheiras de infiltracao",
+        "Infil_sugerida_mm_h": 25.0,
+        "Infil_min_mm_h": 8.0,
+        "Infil_max_mm_h": 60.0,
+        "n_sugerido": 0.080,
+        "n_min": 0.040,
+        "n_max": 0.150,
     },
 ]
 
@@ -568,8 +608,14 @@ if pagina == "Sugestao de calibracao":
 
     st.markdown(
         """
-**Fonte conceitual:** literatura de drenagem urbana e manuais de coeficientes de Manning (escoamento superficial e canais).  
-**Infiltracao** em eventos curtos e intensos pode ser calibrada para baixo se houver saturacao ou encrostamento; **n** aumenta com vegetacao densa e irregularidade do terreno.
+**Referencias usadas para sugerir faixas (valores iniciais de calibracao):**
+
+- **Chow, V. T. (1959)** — *Open-Channel Hydraulics* (faixas classicas de `n` de Manning para canais e superficies).
+- **USDA-SCS / NRCS** — manuais hidrologicos e parametros de infiltracao para diferentes coberturas e condicoes de solo.
+- **Tucci, C. E. M.** (drenagem urbana, edicoes diversas) — comportamento hidrologico em bacias urbanas brasileiras e uso de parametros de superficie.
+- **Akan, A. O. & Houghtalen, R. J.** — *Urban Hydrology, Hydraulics, and Stormwater Quality* (parametros tipicos em drenagem urbana).
+
+**Nota tecnica:** estes valores sao **pontos de partida** para evento unico; devem ser ajustados por calibracao local (chuva-vazao/nivel observado), considerando compactacao, saturacao antecedente, declividade, cobertura vegetal e estado de conservacao das superficies/canais.
         """
     )
 
