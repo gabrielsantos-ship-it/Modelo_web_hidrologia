@@ -615,6 +615,120 @@ def montar_df_validacao(df_saida: pd.DataFrame, df_obs_antigo: pd.DataFrame | No
     return out
 
 
+def _montar_grade_parametros(vmin: float, vmax: float, passo: float) -> np.ndarray:
+    vmin = float(vmin)
+    vmax = float(vmax)
+    passo = float(passo)
+    if passo <= 0:
+        raise ValueError("Passo deve ser maior que zero.")
+    if vmax < vmin:
+        raise ValueError("Valor maximo deve ser maior ou igual ao minimo.")
+    n = int(math.floor((vmax - vmin) / passo + 1e-12)) + 1
+    vals = vmin + np.arange(n, dtype=float) * passo
+    vals = np.round(vals, 10)
+    if vals[-1] < vmax - 1e-9:
+        vals = np.append(vals, vmax)
+    return vals
+
+
+def calibrar_horton_em_grade(
+    df_obs: pd.DataFrame,
+    dt_seg: float,
+    chuva_mmh: np.ndarray,
+    ac_df: pd.DataFrame,
+    exutorio_id: int,
+    b_canal: float,
+    s_canal: float,
+    n_canal: float,
+    nivel_base: float,
+    k_vals: np.ndarray,
+    f0fc_vals: np.ndarray,
+) -> pd.DataFrame:
+    if df_obs is None or df_obs.empty:
+        return pd.DataFrame()
+
+    obs_base = df_obs[["Tempo_s", "Nivel_obs_m"]].copy()
+    obs_base["Tempo_s"] = pd.to_numeric(obs_base["Tempo_s"], errors="coerce")
+    obs_base["Nivel_obs_m"] = pd.to_numeric(obs_base["Nivel_obs_m"], errors="coerce")
+    obs_base = obs_base.dropna(subset=["Tempo_s", "Nivel_obs_m"]).drop_duplicates(subset=["Tempo_s"])
+    if len(obs_base) < 2:
+        return pd.DataFrame()
+
+    registros = []
+    for k_h in k_vals:
+        for f0fc in f0fc_vals:
+            df_saida_k, _ = run_simulation(
+                dt=float(dt_seg),
+                chuva_mmh=chuva_mmh,
+                ac_df=ac_df,
+                exutorio_id=int(exutorio_id),
+                b_canal=float(b_canal),
+                s_canal=float(s_canal),
+                n_canal=float(n_canal),
+                nivel_base=float(nivel_base),
+                horton_k_h_inv=float(k_h),
+                horton_f0_multiplicador=float(f0fc),
+            )
+            df_cmp = obs_base.merge(
+                df_saida_k[["Tempo_s", "Nivel_m"]].rename(columns={"Nivel_m": "Nivel_sim_m"}),
+                on="Tempo_s",
+                how="left",
+            )
+            df_cmp = df_cmp.dropna(subset=["Nivel_sim_m"])
+            if len(df_cmp) < 2:
+                continue
+
+            obs = df_cmp["Nivel_obs_m"].astype(float).values
+            sim = df_cmp["Nivel_sim_m"].astype(float).values
+            nse = nash_sutcliffe_efficiency(obs, sim)
+            r2 = r2_pearson(obs, sim)
+            err_rmse = rmse(obs, sim)
+            err_mae = mae(obs, sim)
+            vb = vies_medio(obs, sim)
+
+            i_obs_peak = int(np.argmax(obs))
+            i_sim_peak = int(np.argmax(sim))
+            pico_obs = float(obs[i_obs_peak])
+            pico_sim = float(sim[i_sim_peak])
+            tempo_obs_peak = float(df_cmp["Tempo_s"].iloc[i_obs_peak])
+            tempo_sim_peak = float(df_cmp["Tempo_s"].iloc[i_sim_peak])
+            erro_pico_pct = float(100.0 * (pico_sim - pico_obs) / pico_obs) if abs(pico_obs) > 1e-12 else float("nan")
+            erro_tempo_pico_min = float((tempo_sim_peak - tempo_obs_peak) / 60.0)
+
+            score = (
+                (1.0 - nse if np.isfinite(nse) else 9_999.0)
+                + abs(erro_pico_pct) / 100.0
+                + abs(erro_tempo_pico_min) / 60.0
+                + (err_rmse if np.isfinite(err_rmse) else 9_999.0)
+            )
+
+            registros.append(
+                {
+                    "k_h_inv": float(k_h),
+                    "f0_fc": float(f0fc),
+                    "NSE": float(nse) if np.isfinite(nse) else np.nan,
+                    "R2": float(r2) if np.isfinite(r2) else np.nan,
+                    "RMSE_m": float(err_rmse) if np.isfinite(err_rmse) else np.nan,
+                    "MAE_m": float(err_mae) if np.isfinite(err_mae) else np.nan,
+                    "Vies_m": float(vb) if np.isfinite(vb) else np.nan,
+                    "Pico_obs_m": pico_obs,
+                    "Pico_sim_m": pico_sim,
+                    "Erro_pico_pct": erro_pico_pct,
+                    "Erro_tempo_pico_min": erro_tempo_pico_min,
+                    "Score_composto": float(score),
+                }
+            )
+
+    if not registros:
+        return pd.DataFrame()
+    out = pd.DataFrame(registros)
+    out = out.sort_values(
+        by=["Score_composto", "RMSE_m", "Erro_pico_pct"],
+        ascending=[True, True, True],
+    ).reset_index(drop=True)
+    return out
+
+
 if "sim_store_loaded" not in st.session_state:
     store = carregar_simulacoes_salvas()
     st.session_state["sim_store"] = store
@@ -924,6 +1038,124 @@ elif pagina == "Validacao":
                     use_container_width=True,
                     hide_index=True,
                 )
+
+                st.divider()
+                st.subheader("Calibracao automatica (grade Horton)")
+                st.caption(
+                    "Varre combinacoes de `k` e `f0/fc`, simula novamente e ranqueia pelos melhores ajustes com base em NSE, RMSE e erro de pico."
+                )
+
+                c1, c2, c3 = st.columns(3)
+                k_min = c1.number_input("k min (1/h)", min_value=0.0, value=1.0, step=0.1, key="cal_k_min")
+                k_max = c2.number_input("k max (1/h)", min_value=0.0, value=5.0, step=0.1, key="cal_k_max")
+                k_step = c3.number_input("k passo", min_value=0.1, value=0.5, step=0.1, key="cal_k_step")
+
+                c4, c5, c6 = st.columns(3)
+                f_min = c4.number_input("f0/fc min", min_value=1.0, value=1.0, step=0.1, key="cal_f_min")
+                f_max = c5.number_input("f0/fc max", min_value=1.0, value=3.0, step=0.1, key="cal_f_max")
+                f_step = c6.number_input("f0/fc passo", min_value=0.1, value=0.2, step=0.1, key="cal_f_step")
+
+                top_n = st.number_input("Top resultados exibidos", min_value=3, max_value=50, value=10, step=1, key="cal_top_n")
+
+                if st.button("Rodar calibracao automatica", key="btn_calibracao_horton"):
+                    try:
+                        k_vals = _montar_grade_parametros(float(k_min), float(k_max), float(k_step))
+                        f_vals = _montar_grade_parametros(float(f_min), float(f_max), float(f_step))
+                        n_comb = int(len(k_vals) * len(f_vals))
+                        if n_comb > 500:
+                            st.error(
+                                f"Foram solicitadas {n_comb} combinacoes. Reduza as faixas/passos para no maximo 500."
+                            )
+                        else:
+                            ac_loaded = st.session_state.get("ac_df_loaded")
+                            chuva_loaded = st.session_state.get("chuva_df_loaded")
+                            if ac_loaded is None or chuva_loaded is None or len(ac_loaded) == 0 or len(chuva_loaded) == 0:
+                                st.error("Dados de simulacao nao encontrados. Rode a simulacao novamente antes de calibrar.")
+                            else:
+                                ac_cal = ac_loaded.copy()
+                                ac_cal["ID_AC"] = pd.to_numeric(ac_cal["ID_AC"], errors="coerce").astype(int)
+                                for col in ["Area_m2", "L_m", "S_m_m", "h0_m", "Infiltracao_eq_mm_h", "n_eq"]:
+                                    ac_cal[col] = pd.to_numeric(ac_cal[col], errors="coerce").astype(float)
+
+                                chuva_cal = (
+                                    pd.to_numeric(chuva_loaded["P_mm_h"], errors="coerce").astype(float).to_numpy()
+                                )
+                                df_rank = calibrar_horton_em_grade(
+                                    df_obs=df_obs,
+                                    dt_seg=float(st.session_state.get("dt_seg", 600)),
+                                    chuva_mmh=chuva_cal,
+                                    ac_df=ac_cal,
+                                    exutorio_id=int(st.session_state.get("exutorio_id", int(ac_cal["ID_AC"].max()))),
+                                    b_canal=float(st.session_state.get("b_canal", 4.0)),
+                                    s_canal=float(st.session_state.get("s_canal", 0.004)),
+                                    n_canal=float(st.session_state.get("n_canal", 0.018)),
+                                    nivel_base=float(st.session_state.get("nivel_base", 0.2)),
+                                    k_vals=k_vals,
+                                    f0fc_vals=f_vals,
+                                )
+                                if df_rank.empty:
+                                    st.error("Nao foi possivel calibrar: sem pontos observados suficientes apos alinhamento por Tempo_s.")
+                                else:
+                                    st.session_state["df_calibracao_horton"] = df_rank
+                                    st.success(
+                                        f"Calibracao concluida com {len(df_rank)} combinacoes validas."
+                                    )
+                    except Exception as exc:
+                        st.error(f"Erro na calibracao automatica: {exc}")
+
+                df_rank = st.session_state.get("df_calibracao_horton")
+                if isinstance(df_rank, pd.DataFrame) and not df_rank.empty:
+                    st.markdown("**Melhor combinacao encontrada**")
+                    best = df_rank.iloc[0]
+                    cbest1, cbest2, cbest3, cbest4 = st.columns(4)
+                    cbest1.metric("k (1/h)", f"{best['k_h_inv']:.3f}")
+                    cbest2.metric("f0/fc", f"{best['f0_fc']:.3f}")
+                    cbest3.metric("NSE", f"{best['NSE']:.4f}")
+                    cbest4.metric("RMSE (m)", f"{best['RMSE_m']:.4f}")
+                    st.metric("Erro de pico (%)", f"{best['Erro_pico_pct']:.2f}")
+
+                    st.dataframe(
+                        df_rank.head(int(top_n)),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    if st.button("Aplicar melhor conjunto e re-simular", key="btn_aplicar_calibracao_horton"):
+                        try:
+                            st.session_state["horton_k_h_inv"] = float(best["k_h_inv"])
+                            st.session_state["horton_f0_multiplicador"] = float(best["f0_fc"])
+
+                            ac_ap = st.session_state.get("ac_df_loaded").copy()
+                            ac_ap["ID_AC"] = pd.to_numeric(ac_ap["ID_AC"], errors="coerce").astype(int)
+                            for col in ["Area_m2", "L_m", "S_m_m", "h0_m", "Infiltracao_eq_mm_h", "n_eq"]:
+                                ac_ap[col] = pd.to_numeric(ac_ap[col], errors="coerce").astype(float)
+                            chuva_ap = (
+                                pd.to_numeric(st.session_state.get("chuva_df_loaded")["P_mm_h"], errors="coerce")
+                                .astype(float)
+                                .to_numpy()
+                            )
+                            df_saida_best, _ = run_simulation(
+                                dt=float(st.session_state.get("dt_seg", 600)),
+                                chuva_mmh=chuva_ap,
+                                ac_df=ac_ap,
+                                exutorio_id=int(st.session_state.get("exutorio_id", int(ac_ap["ID_AC"].max()))),
+                                b_canal=float(st.session_state.get("b_canal", 4.0)),
+                                s_canal=float(st.session_state.get("s_canal", 0.004)),
+                                n_canal=float(st.session_state.get("n_canal", 0.018)),
+                                nivel_base=float(st.session_state.get("nivel_base", 0.2)),
+                                horton_k_h_inv=float(best["k_h_inv"]),
+                                horton_f0_multiplicador=float(best["f0_fc"]),
+                            )
+                            st.session_state["df_saida_validacao"] = df_saida_best.copy()
+                            st.session_state["df_validacao_obs"] = montar_df_validacao(
+                                df_saida_best, st.session_state.get("df_validacao_obs")
+                            )
+                            st.success(
+                                "Melhor conjunto aplicado. Serie simulada da validacao foi atualizada com os novos parametros."
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Erro ao aplicar melhor conjunto: {exc}")
 
 else:
     st.title("Modelo Hidrologico Urbano - Escoamento e Nivel no Canal")
