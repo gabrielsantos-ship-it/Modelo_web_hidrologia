@@ -982,6 +982,17 @@ elif pagina == "Validacao":
             n_valid = int(mask.sum())
             if n_valid < 2:
                 st.warning("Informe pelo menos **2** valores de nivel observado para calcular metricas.")
+                st.divider()
+                st.subheader("Calibracao automatica (grade Horton)")
+                st.caption(
+                    "Preencha ao menos 2 pontos observados para habilitar a calibracao automatica."
+                )
+                st.button(
+                    "Rodar calibracao automatica",
+                    key="btn_calibracao_horton_disabled",
+                    disabled=True,
+                    help="Disponivel apos informar pelo menos 2 niveis observados validos.",
+                )
             else:
                 obs = df_obs.loc[mask, "Nivel_obs_m"].astype(float).values
                 sim = df_obs.loc[mask, "Nivel_sim_m"].astype(float).values
