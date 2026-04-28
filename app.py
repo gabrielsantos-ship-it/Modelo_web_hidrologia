@@ -1,6 +1,7 @@
 import math
 import json
 from io import BytesIO
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -226,6 +227,8 @@ def gerar_payload_simulacao(
     s_canal: float,
     n_canal: float,
     nivel_base: float,
+    horton_k_h_inv: float,
+    horton_f0_multiplicador: float,
     usar_us_para_eq: bool,
     ac_df: pd.DataFrame,
     us_df: pd.DataFrame,
@@ -246,6 +249,8 @@ def gerar_payload_simulacao(
             "s_canal": float(s_canal),
             "n_canal": float(n_canal),
             "nivel_base": float(nivel_base),
+            "horton_k_h_inv": float(horton_k_h_inv),
+            "horton_f0_multiplicador": float(horton_f0_multiplicador),
             "usar_us_para_eq": bool(usar_us_para_eq),
             "hora_inicio_evento": str(start_hhmm),
             "hora_fim_evento": str(end_hhmm),
@@ -266,6 +271,8 @@ def aplicar_payload_em_session(payload: dict) -> None:
     st.session_state["s_canal"] = float(p.get("s_canal", 0.004))
     st.session_state["n_canal"] = float(p.get("n_canal", 0.018))
     st.session_state["nivel_base"] = float(p.get("nivel_base", 0.2))
+    st.session_state["horton_k_h_inv"] = float(p.get("horton_k_h_inv", 2.5))
+    st.session_state["horton_f0_multiplicador"] = float(p.get("horton_f0_multiplicador", 3.0))
     st.session_state["usar_us_para_eq"] = bool(p.get("usar_us_para_eq", True))
     st.session_state["hora_inicio_evento"] = str(p.get("hora_inicio_evento", "12:00"))
     st.session_state["hora_fim_evento"] = str(p.get("hora_fim_evento", "12:40"))
@@ -287,6 +294,8 @@ def validar_campos_obrigatorios(
     b_canal: float,
     s_canal: float,
     n_canal: float,
+    horton_k_h_inv: float,
+    horton_f0_multiplicador: float,
     ac_df: pd.DataFrame,
     us_df: pd.DataFrame,
     chuva_df: pd.DataFrame,
@@ -308,6 +317,10 @@ def validar_campos_obrigatorios(
         erros.append("`S_canal (m/m)` deve ser maior que zero.")
     if n_canal <= 0:
         erros.append("`n_canal` deve ser maior que zero.")
+    if horton_k_h_inv < 0:
+        erros.append("`k de Horton (1/h)` deve ser maior ou igual a zero.")
+    if horton_f0_multiplicador < 1:
+        erros.append("`f0/fc de Horton` deve ser maior ou igual a 1.")
     if ac_df.empty:
         erros.append("Tabela de `Areas de contribuicao (AC)` esta vazia.")
     else:
@@ -349,6 +362,45 @@ def parse_upstream_ids(text: str) -> list[int]:
     return ids
 
 
+def ordenar_ac_topologicamente(ac_df: pd.DataFrame) -> pd.DataFrame:
+    """Ordena ACs para garantir montante -> jusante no mesmo passo de tempo."""
+    ac_work = ac_df.copy()
+    ac_work["ID_AC"] = ac_work["ID_AC"].astype(int)
+    ac_work = ac_work.reset_index(drop=True)
+
+    ac_ids = ac_work["ID_AC"].tolist()
+    id_set = set(ac_ids)
+    idx_by_id = {ac_id: i for i, ac_id in enumerate(ac_ids)}
+
+    indeg = {ac_id: 0 for ac_id in ac_ids}
+    downstream_adj: dict[int, list[int]] = {ac_id: [] for ac_id in ac_ids}
+
+    for _, row in ac_work.iterrows():
+        ac_id = int(row["ID_AC"])
+        for up_id in parse_upstream_ids(row["ACs_montante_ids"]):
+            if up_id in id_set:
+                downstream_adj[up_id].append(ac_id)
+                indeg[ac_id] += 1
+
+    fila = deque(sorted([ac_id for ac_id in ac_ids if indeg[ac_id] == 0]))
+    ordem_ids: list[int] = []
+    while fila:
+        atual = fila.popleft()
+        ordem_ids.append(atual)
+        for ds_id in sorted(downstream_adj[atual]):
+            indeg[ds_id] -= 1
+            if indeg[ds_id] == 0:
+                fila.append(ds_id)
+
+    if len(ordem_ids) != len(ac_ids):
+        raise ValueError(
+            "A rede de ACs possui ciclo nas relacoes de montante. Corrija `ACs_montante_ids` para uma estrutura aciclica."
+        )
+
+    ordem_idx = [idx_by_id[ac_id] for ac_id in ordem_ids]
+    return ac_work.iloc[ordem_idx].reset_index(drop=True)
+
+
 def solve_channel_depth(
     q_ex: np.ndarray, b_canal: float, s_canal: float, n_canal: float, n_iter: int = 5
 ) -> np.ndarray:
@@ -377,14 +429,14 @@ def run_simulation(
     s_canal: float,
     n_canal: float,
     nivel_base: float,
+    horton_k_h_inv: float = 2.5,
+    horton_f0_multiplicador: float = 3.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     n_steps = len(chuva_mmh)
     tempo_s = np.arange(n_steps) * dt
     chuva_ms = chuva_mmh / 3600000.0
 
-    ac_df = ac_df.copy()
-    ac_df["ID_AC"] = ac_df["ID_AC"].astype(int)
-    ac_df = ac_df.sort_values("ID_AC").reset_index(drop=True)
+    ac_df = ordenar_ac_topologicamente(ac_df)
     n_ac = len(ac_df)
     ac_ids = ac_df["ID_AC"].tolist()
     id_to_idx = {ac_id: i for i, ac_id in enumerate(ac_ids)}
@@ -393,6 +445,8 @@ def run_simulation(
     q_out = np.zeros((n_steps, n_ac), dtype=float)
     q_in = np.zeros((n_steps, n_ac), dtype=float)
     i_excesso = np.zeros((n_steps, n_ac), dtype=float)
+    infil_real = np.zeros((n_steps, n_ac), dtype=float)
+    t_umido_s = np.zeros(n_ac, dtype=float)
 
     for j, row in ac_df.iterrows():
         h[0, j] = max(float(row["h0_m"]), 0.0)
@@ -402,12 +456,23 @@ def run_simulation(
             area = max(float(row["Area_m2"]), 1e-9)
             comp = max(float(row["L_m"]), 1e-9)
             n_eq = max(float(row["n_eq"]), 1e-9)
-            infil_mmh = max(float(row["Infiltracao_eq_mm_h"]), 0.0)
+            infil_fc_mmh = max(float(row["Infiltracao_eq_mm_h"]), 0.0)
             decliv = max(float(row["S_m_m"]), 1e-9)
             w_eq = area / comp
 
             h_prev = h[t, j] if t == 0 else h[t - 1, j]
-            i_eff = max(chuva_ms[t] - infil_mmh / 3600000.0, 0.0)
+            if chuva_mmh[t] > 0:
+                t_umido_s[j] += dt
+            t_umido_h = t_umido_s[j] / 3600.0
+
+            infil_f0_mmh = max(infil_fc_mmh * max(horton_f0_multiplicador, 1.0), infil_fc_mmh)
+            infil_cap_mmh = infil_fc_mmh + (infil_f0_mmh - infil_fc_mmh) * math.exp(
+                -max(horton_k_h_inv, 0.0) * t_umido_h
+            )
+            infil_t_ms = min(chuva_ms[t], infil_cap_mmh / 3600000.0)
+            infil_real[t, j] = infil_t_ms
+
+            i_eff = max(chuva_ms[t] - infil_t_ms, 0.0)
             i_excesso[t, j] = i_eff
 
             upstream_ids = parse_upstream_ids(row["ACs_montante_ids"])
@@ -451,6 +516,7 @@ def run_simulation(
                 "Tempo_s": tempo_s,
                 "ID_AC": ac_id,
                 "i_excesso_m_s": i_excesso[:, j],
+                "Infiltracao_real_m_s": infil_real[:, j],
                 "Q_in_m3_s": q_in[:, j],
                 "Q_out_m3_s": q_out[:, j],
                 "h_m": h[:, j],
@@ -870,6 +936,8 @@ else:
     st.session_state.setdefault("s_canal", 0.004)
     st.session_state.setdefault("n_canal", 0.018)
     st.session_state.setdefault("nivel_base", 0.2)
+    st.session_state.setdefault("horton_k_h_inv", 2.5)
+    st.session_state.setdefault("horton_f0_multiplicador", 3.0)
     st.session_state.setdefault("n_ac", 3)
     st.session_state.setdefault("exutorio_id", 3)
     st.session_state.setdefault("usar_us_para_eq", True)
@@ -905,6 +973,12 @@ else:
         st.header("Configuracao")
         dt_seg = st.number_input("Delta t (s)", min_value=60, step=60, key="dt_seg")
         duracao_min = st.number_input("Duracao da chuva (min)", min_value=10, step=10, key="duracao_min")
+        st.divider()
+        st.caption("Infiltracao variavel (Horton simplificado)")
+        horton_k_h_inv = st.number_input("k de Horton (1/h)", min_value=0.0, step=0.1, key="horton_k_h_inv")
+        horton_f0_multiplicador = st.number_input(
+            "f0/fc de Horton", min_value=1.0, step=0.1, key="horton_f0_multiplicador"
+        )
         n_passos = int(math.ceil((duracao_min * 60) / dt_seg) + 1)
         st.write(f"Passos ativos: {n_passos} (inclui t=0)")
 
@@ -1089,6 +1163,8 @@ else:
             s_canal=float(s_canal),
             n_canal=float(n_canal),
             nivel_base=float(nivel_base),
+            horton_k_h_inv=float(horton_k_h_inv),
+            horton_f0_multiplicador=float(horton_f0_multiplicador),
             usar_us_para_eq=bool(usar_us_para_eq),
             ac_df=ac_preview,
             us_df=us_df,
@@ -1119,6 +1195,8 @@ else:
                 b_canal=float(b_canal),
                 s_canal=float(s_canal),
                 n_canal=float(n_canal),
+                horton_k_h_inv=float(horton_k_h_inv),
+                horton_f0_multiplicador=float(horton_f0_multiplicador),
                 ac_df=ac_df,
                 us_df=us_df,
                 chuva_df=chuva_df_edit,
@@ -1144,6 +1222,8 @@ else:
                 s_canal=float(s_canal),
                 n_canal=float(n_canal),
                 nivel_base=float(nivel_base),
+                horton_k_h_inv=float(horton_k_h_inv),
+                horton_f0_multiplicador=float(horton_f0_multiplicador),
             )
 
             st.session_state["df_saida_validacao"] = df_saida.copy()
