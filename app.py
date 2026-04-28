@@ -559,6 +559,13 @@ if "sim_store_loaded" not in st.session_state:
         if last is not None:
             aplicar_payload_em_session(last)
 
+if "pending_page" not in st.session_state:
+    st.session_state["pending_page"] = None
+
+if st.session_state.get("pending_page") is not None:
+    st.session_state["pagina_menu"] = st.session_state["pending_page"]
+    st.session_state["pending_page"] = None
+
 with st.sidebar:
     st.header("Menu")
     pagina = st.radio(
@@ -684,7 +691,7 @@ elif pagina == "Simulacoes salvas":
                     aplicar_payload_em_session(item)
                     st.session_state["sim_store"]["last_id"] = item.get("id")
                     salvar_simulacoes_salvas(st.session_state["sim_store"])
-                    st.session_state["pagina_menu"] = "Simulacao"
+                    st.session_state["pending_page"] = "Simulacao"
                     st.rerun()
                 if c2.button("Excluir", key=f"del_{item.get('id')}"):
                     st.session_state["sim_store"]["items"] = [
