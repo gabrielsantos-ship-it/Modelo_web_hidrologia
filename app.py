@@ -901,16 +901,22 @@ elif pagina == "Validacao":
 
         with tab_manual:
             prev = st.session_state.get("df_validacao_obs")
-            needs_reset = (
-                prev is None
-                or "Tempo_s" not in prev.columns
-                or len(prev) != len(df_sim)
-                or not np.array_equal(pd.to_numeric(prev["Tempo_s"], errors="coerce").values, df_sim["Tempo_s"].values)
-            )
-            if needs_reset:
-                df_val = montar_df_validacao(df_sim, prev)
-            else:
-                df_val = prev.copy()
+            base_val = df_sim[["Passo", "Tempo_s"]].copy()
+            base_val["Nivel_sim_m"] = df_sim["Nivel_m"].values
+            df_val = base_val.copy()
+            df_val["Nivel_obs_m"] = np.nan
+
+            if isinstance(prev, pd.DataFrame) and "Nivel_obs_m" in prev.columns:
+                prev_work = prev.copy()
+                prev_work["Nivel_obs_m"] = pd.to_numeric(prev_work["Nivel_obs_m"], errors="coerce")
+                if "Tempo_s" in prev_work.columns:
+                    prev_work["Tempo_s"] = pd.to_numeric(prev_work["Tempo_s"], errors="coerce")
+                    obs_old = prev_work[["Tempo_s", "Nivel_obs_m"]].drop_duplicates(subset=["Tempo_s"])
+                    df_val = base_val.merge(obs_old, on="Tempo_s", how="left")
+                else:
+                    n_copy = min(len(df_val), len(prev_work))
+                    if n_copy > 0:
+                        df_val.loc[: n_copy - 1, "Nivel_obs_m"] = prev_work.iloc[:n_copy]["Nivel_obs_m"].values
             df_edit = st.data_editor(
                 df_val,
                 num_rows="fixed",
@@ -1161,6 +1167,18 @@ elif pagina == "Validacao":
                     use_container_width=True,
                     hide_index=True,
                 )
+        else:
+            st.divider()
+            st.subheader("Calibracao automatica (grade Horton)")
+            st.caption(
+                "Preencha dados observados na grade ou via CSV para habilitar a calibracao automatica."
+            )
+            st.button(
+                "Rodar calibracao automatica",
+                key="btn_calibracao_horton_sem_dados",
+                disabled=True,
+                help="Disponivel apos informar pelo menos 2 niveis observados validos.",
+            )
 
 else:
     st.title("Modelo Hidrologico Urbano - Escoamento e Nivel no Canal")
