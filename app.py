@@ -695,11 +695,9 @@ def calibrar_horton_em_grade(
             erro_pico_pct = float(100.0 * (pico_sim - pico_obs) / pico_obs) if abs(pico_obs) > 1e-12 else float("nan")
             erro_tempo_pico_min = float((tempo_sim_peak - tempo_obs_peak) / 60.0)
 
-            score = (
+            score_nse_pico = (
                 (1.0 - nse if np.isfinite(nse) else 9_999.0)
                 + abs(erro_pico_pct) / 100.0
-                + abs(erro_tempo_pico_min) / 60.0
-                + (err_rmse if np.isfinite(err_rmse) else 9_999.0)
             )
 
             registros.append(
@@ -715,17 +713,16 @@ def calibrar_horton_em_grade(
                     "Pico_sim_m": pico_sim,
                     "Erro_pico_pct": erro_pico_pct,
                     "Erro_tempo_pico_min": erro_tempo_pico_min,
-                    "Score_composto": float(score),
+                    "Score_nse_pico": float(score_nse_pico),
                 }
             )
 
     if not registros:
         return pd.DataFrame()
     out = pd.DataFrame(registros)
-    out = out.sort_values(
-        by=["Score_composto", "RMSE_m", "Erro_pico_pct"],
-        ascending=[True, True, True],
-    ).reset_index(drop=True)
+    out = out.sort_values(by=["Score_nse_pico", "NSE", "Erro_pico_pct"], ascending=[True, False, True]).reset_index(
+        drop=True
+    )
     return out
 
 
@@ -1042,7 +1039,7 @@ elif pagina == "Validacao":
                 st.divider()
                 st.subheader("Calibracao automatica (grade Horton)")
                 st.caption(
-                    "Varre combinacoes de `k` e `f0/fc`, simula novamente e ranqueia pelos melhores ajustes com base em NSE, RMSE e erro de pico."
+                    "Varre combinacoes de `k` e `f0/fc`, simula novamente e ranqueia automaticamente por `Score_nse_pico = (1 - NSE) + |erro_pico_pct|/100`."
                 )
 
                 c1, c2, c3 = st.columns(3)
@@ -1111,7 +1108,7 @@ elif pagina == "Validacao":
                     cbest1.metric("k (1/h)", f"{best['k_h_inv']:.3f}")
                     cbest2.metric("f0/fc", f"{best['f0_fc']:.3f}")
                     cbest3.metric("NSE", f"{best['NSE']:.4f}")
-                    cbest4.metric("RMSE (m)", f"{best['RMSE_m']:.4f}")
+                    cbest4.metric("Score NSE+pico", f"{best['Score_nse_pico']:.4f}")
                     st.metric("Erro de pico (%)", f"{best['Erro_pico_pct']:.2f}")
 
                     st.dataframe(
