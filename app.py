@@ -1,7 +1,7 @@
 import math
 import json
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -231,6 +231,8 @@ def gerar_payload_simulacao(
     us_df: pd.DataFrame,
     chuva_df: pd.DataFrame,
 ) -> dict:
+    start_hhmm = st.session_state.get("hora_inicio_evento", "12:00")
+    end_hhmm = st.session_state.get("hora_fim_evento", "12:40")
     return {
         "id": datetime.utcnow().strftime("%Y%m%d%H%M%S%f"),
         "titulo": titulo.strip() if titulo.strip() else f"Simulação {datetime.now().strftime('%d/%m/%Y %H:%M')}",
@@ -245,6 +247,8 @@ def gerar_payload_simulacao(
             "n_canal": float(n_canal),
             "nivel_base": float(nivel_base),
             "usar_us_para_eq": bool(usar_us_para_eq),
+            "hora_inicio_evento": str(start_hhmm),
+            "hora_fim_evento": str(end_hhmm),
         },
         "ac_df": ac_df.to_dict(orient="records"),
         "us_df": us_df.to_dict(orient="records"),
@@ -263,6 +267,8 @@ def aplicar_payload_em_session(payload: dict) -> None:
     st.session_state["n_canal"] = float(p.get("n_canal", 0.018))
     st.session_state["nivel_base"] = float(p.get("nivel_base", 0.2))
     st.session_state["usar_us_para_eq"] = bool(p.get("usar_us_para_eq", True))
+    st.session_state["hora_inicio_evento"] = str(p.get("hora_inicio_evento", "12:00"))
+    st.session_state["hora_fim_evento"] = str(p.get("hora_fim_evento", "12:40"))
     st.session_state["ac_df_loaded"] = pd.DataFrame(payload.get("ac_df", []))
     st.session_state["us_df_loaded"] = pd.DataFrame(payload.get("us_df", []))
     st.session_state["chuva_df_loaded"] = pd.DataFrame(payload.get("chuva_df", []))
@@ -321,6 +327,12 @@ def validar_campos_obrigatorios(
     elif pd.to_numeric(chuva_df["P_mm_h"], errors="coerce").isna().any():
         erros.append("Preencha todos os valores de `P_mm_h` na tabela de chuva.")
     return erros
+
+
+def montar_tempo_evento_hhmm(n_steps: int, dt_seg: int, hora_inicio: str) -> list[str]:
+    h, m = [int(x) for x in hora_inicio.split(":")]
+    t0 = datetime(2000, 1, 1, h, m)
+    return [(t0 + timedelta(seconds=i * dt_seg)).strftime("%H:%M") for i in range(n_steps)]
 
 
 def parse_upstream_ids(text: str) -> list[int]:
@@ -560,6 +572,7 @@ with st.sidebar:
             "Descricao das variaveis",
         ],
         label_visibility="collapsed",
+        key="pagina_menu",
     )
 
 if pagina == "Sugestao de calibracao":
@@ -671,7 +684,8 @@ elif pagina == "Simulacoes salvas":
                     aplicar_payload_em_session(item)
                     st.session_state["sim_store"]["last_id"] = item.get("id")
                     salvar_simulacoes_salvas(st.session_state["sim_store"])
-                    st.success("Simulacao carregada. Abra a aba **Simulacao** para editar/rodar.")
+                    st.session_state["pagina_menu"] = "Simulacao"
+                    st.rerun()
                 if c2.button("Excluir", key=f"del_{item.get('id')}"):
                     st.session_state["sim_store"]["items"] = [
                         x for x in st.session_state["sim_store"]["items"] if x.get("id") != item.get("id")
@@ -703,7 +717,16 @@ elif pagina == "Validacao":
 
         with tab_manual:
             prev = st.session_state.get("df_validacao_obs")
-            df_val = montar_df_validacao(df_sim, prev)
+            needs_reset = (
+                prev is None
+                or "Tempo_s" not in prev.columns
+                or len(prev) != len(df_sim)
+                or not np.array_equal(pd.to_numeric(prev["Tempo_s"], errors="coerce").values, df_sim["Tempo_s"].values)
+            )
+            if needs_reset:
+                df_val = montar_df_validacao(df_sim, prev)
+            else:
+                df_val = prev.copy()
             df_edit = st.data_editor(
                 df_val,
                 num_rows="fixed",
@@ -844,6 +867,8 @@ else:
     st.session_state.setdefault("exutorio_id", 3)
     st.session_state.setdefault("usar_us_para_eq", True)
     st.session_state.setdefault("titulo_salvar", "")
+    st.session_state.setdefault("hora_inicio_evento", "12:00")
+    st.session_state.setdefault("hora_fim_evento", "12:40")
     st.session_state.setdefault("_clear_sim_requested", False)
     st.session_state.setdefault("_show_clear_notice", False)
 
@@ -856,6 +881,8 @@ else:
         )
         st.session_state["chuva_df_loaded"] = pd.DataFrame(columns=["Passo", "Tempo_s", "P_mm_h"])
         st.session_state["titulo_salvar"] = ""
+        st.session_state["hora_inicio_evento"] = "12:00"
+        st.session_state["hora_fim_evento"] = "12:40"
         # Limpa estado interno dos widgets antes de renderizar novamente.
         st.session_state.pop("editor_ac", None)
         st.session_state.pop("editor_us", None)
@@ -996,6 +1023,28 @@ else:
         ac_preview = ac_df.copy()
 
     st.subheader("4) Chuva (mm/h)")
+    c_t1, c_t2 = st.columns(2)
+    hora_inicio_str = c_t1.text_input("Horario de inicio do evento (HH:MM)", key="hora_inicio_evento")
+    hora_fim_str = c_t2.text_input("Horario de termino do evento (HH:MM)", key="hora_fim_evento")
+    horario_ok = True
+    try:
+        inicio_h, inicio_m = [int(x) for x in hora_inicio_str.split(":")]
+        fim_h, fim_m = [int(x) for x in hora_fim_str.split(":")]
+        t_ini = datetime(2000, 1, 1, inicio_h, inicio_m)
+        t_fim = datetime(2000, 1, 1, fim_h, fim_m)
+        if t_fim < t_ini:
+            t_fim = t_fim + timedelta(days=1)
+        duracao_horario_min = int((t_fim - t_ini).total_seconds() / 60)
+        duracao_modelo_min = int((n_passos - 1) * dt_seg / 60)
+        if duracao_horario_min != duracao_modelo_min:
+            st.warning(
+                f"Duracao por horario ({duracao_horario_min} min) difere da duracao do modelo ({duracao_modelo_min} min). "
+                "O eixo sera discretizado por Delta t a partir do horario de inicio."
+            )
+    except Exception:
+        horario_ok = False
+        st.error("Formato de horario invalido. Use HH:MM, ex.: 12:00.")
+
     tempo_vec = np.arange(n_passos) * dt_seg
     default_chuva = np.zeros(n_passos)
     if n_passos >= 5:
@@ -1052,6 +1101,9 @@ else:
 
     if st.button("Rodar simulacao", type="primary"):
         try:
+            if not horario_ok:
+                st.error("Corrija os horarios de inicio/fim antes de rodar a simulacao.")
+                st.stop()
             erros = validar_campos_obrigatorios(
                 dt_seg=int(dt_seg),
                 duracao_min=int(duracao_min),
@@ -1096,23 +1148,26 @@ else:
             st.session_state["chuva_df_loaded"] = chuva_df_edit.copy()
 
             st.success("Simulacao concluida.")
+            tempo_hhmm = montar_tempo_evento_hhmm(len(df_saida), int(dt_seg), hora_inicio_str)
+            df_saida = df_saida.copy()
+            df_saida["Tempo_hhmm"] = tempo_hhmm
             c1, c2, c3 = st.columns(3)
             c1.metric("Pico de vazao (m3/s)", f"{df_saida['Q_ex_m3_s'].max():.4f}")
             c2.metric("Pico de nivel (m)", f"{df_saida['Nivel_m'].max():.4f}")
-            c3.metric("Tempo do pico (s)", f"{df_saida.loc[df_saida['Nivel_m'].idxmax(), 'Tempo_s']:.0f}")
+            c3.metric("Horario do pico", f"{df_saida.loc[df_saida['Nivel_m'].idxmax(), 'Tempo_hhmm']}")
 
             fig_nivel = px.line(
                 df_saida,
-                x="Tempo_s",
+                x="Tempo_hhmm",
                 y="Nivel_m",
                 markers=False,
                 title="Hidrograma de nivel no canal",
             )
-            fig_nivel.update_layout(xaxis_title="Tempo (s)", yaxis_title="Nivel (m)")
+            fig_nivel.update_layout(xaxis_title="Horario", yaxis_title="Nivel (m)")
             st.plotly_chart(fig_nivel, use_container_width=True)
 
-            fig_q = px.line(df_saida, x="Tempo_s", y="Q_ex_m3_s", title="Hidrograma de vazao no exutorio")
-            fig_q.update_layout(xaxis_title="Tempo (s)", yaxis_title="Vazao (m3/s)")
+            fig_q = px.line(df_saida, x="Tempo_hhmm", y="Q_ex_m3_s", title="Hidrograma de vazao no exutorio")
+            fig_q.update_layout(xaxis_title="Horario", yaxis_title="Vazao (m3/s)")
             st.plotly_chart(fig_q, use_container_width=True)
 
             st.subheader("Saida - exutorio")
