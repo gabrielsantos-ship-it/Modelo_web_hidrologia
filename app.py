@@ -420,6 +420,47 @@ def solve_channel_depth(
     return y
 
 
+def solve_surface_depth_implicit(
+    h_prev: float,
+    dt: float,
+    input_rate_m_s: float,
+    alpha_m_2_3_s: float,
+    max_iter: int = 25,
+    tol: float = 1e-9,
+) -> float:
+    """
+    Resolve h_(t+1) por Euler implicito para:
+      dh/dt = input_rate - alpha * h^(5/3)
+    onde alpha = (w_eq / area) * (1/n_eq) * sqrt(S).
+    """
+    h_prev = max(float(h_prev), 0.0)
+    dt = max(float(dt), 0.0)
+    input_rate_m_s = float(input_rate_m_s)
+    alpha_m_2_3_s = max(float(alpha_m_2_3_s), 0.0)
+    if dt <= 0:
+        return h_prev
+
+    if alpha_m_2_3_s <= 0:
+        return max(0.0, h_prev + dt * input_rate_m_s)
+
+    # Chute inicial explicito truncado em zero.
+    h = max(0.0, h_prev + dt * (input_rate_m_s - alpha_m_2_3_s * (h_prev ** (5.0 / 3.0))))
+    for _ in range(max_iter):
+        h_eps = max(h, 1e-12)
+        h_53 = h_eps ** (5.0 / 3.0)
+        f = h - h_prev - dt * (input_rate_m_s - alpha_m_2_3_s * h_53)
+        df = 1.0 + dt * alpha_m_2_3_s * (5.0 / 3.0) * (h_eps ** (2.0 / 3.0))
+        if abs(df) < 1e-15:
+            break
+        h_new = h - f / df
+        h_new = max(0.0, h_new)
+        if abs(h_new - h) <= tol:
+            h = h_new
+            break
+        h = h_new
+    return max(0.0, h)
+
+
 def run_simulation(
     dt: float,
     chuva_mmh: np.ndarray,
@@ -482,11 +523,17 @@ def run_simulation(
                     qin_t += q_out[t, id_to_idx[up_id]]
             q_in[t, j] = qin_t
 
-            q_unit = (1.0 / n_eq) * (max(h_prev, 0.0) ** (5.0 / 3.0)) * math.sqrt(decliv)
-            qout_t = q_unit * w_eq
+            alpha = (w_eq / area) * (1.0 / n_eq) * math.sqrt(decliv)
+            input_rate = i_eff + qin_t / area
+            h_new = solve_surface_depth_implicit(
+                h_prev=h_prev,
+                dt=dt,
+                input_rate_m_s=input_rate,
+                alpha_m_2_3_s=alpha,
+            )
+            q_unit_new = (1.0 / n_eq) * (h_new ** (5.0 / 3.0)) * math.sqrt(decliv)
+            qout_t = q_unit_new * w_eq
             q_out[t, j] = qout_t
-
-            h_new = max(0.0, h_prev + dt * (i_eff + qin_t / area - qout_t / area))
             h[t, j] = h_new
 
     if exutorio_id not in id_to_idx:

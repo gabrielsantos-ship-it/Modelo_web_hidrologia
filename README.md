@@ -45,6 +45,21 @@ Sim: o mesmo app pode rodar em um servidor na nuvem; o usuario so abre o link no
 4. Escolha o repositorio, branch e arquivo principal: `app.py`.
 5. O Streamlit gera um endereco publico (ex.: `https://nome-do-app.streamlit.app`).
 
+### Checklist rapido pre-deploy
+
+- `app.py` na raiz do repositorio.
+- `requirements.txt` na raiz com as dependencias Python.
+- `runtime.txt` na raiz (Python 3.11 para build consistente).
+- `.streamlit/config.toml` opcional (ja incluido neste projeto).
+- Repositorio no GitHub atualizado com `git push`.
+
+### Atualizar app ja publicado
+
+1. Faca alteracoes locais.
+2. Execute `git add .`, `git commit -m "mensagem"`, `git push origin main`.
+3. O Streamlit Cloud reconstrui automaticamente.
+4. Se nao atualizar, abra o app no Streamlit Cloud e clique em **Reboot app**.
+
 **Observacoes:**
 
 - Qualquer pessoa com o link pode usar o app (nao ha login por padrao).
